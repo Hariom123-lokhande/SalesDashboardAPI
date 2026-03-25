@@ -3,6 +3,8 @@ using Microsoft.AspNetCore.Mvc;
 using SalesDashboardAPI.Data;
 using SalesDashboardAPI.Models;
 using System.Globalization;
+using System.Linq;
+using System.Text;
 
 namespace SalesDashboardAPI.Controllers
 {
@@ -21,97 +23,177 @@ namespace SalesDashboardAPI.Controllers
         [HttpPost("upload")]
         public async Task<IActionResult> UploadCsv(IFormFile file)
         {
+            // 1. Basic Validation
             if (file == null || file.Length == 0)
-                return BadRequest("File is empty or not provided");
+                return BadRequest("File is empty or not provided.");
 
-            // Clear existing data for a fresh start (POC requirement)
-            _context.Sales.RemoveRange(_context.Sales);
-            await _context.SaveChangesAsync();
+            // 2. Extension Check
+            var extension = Path.GetExtension(file.FileName).ToLower();
+            if (extension != ".csv")
+                return BadRequest("Invalid file type. Please upload a .csv file.");
 
+            // 3. File Size Limit (e.g., 10MB)
+            if (file.Length > 10 * 1024 * 1024)
+                return BadRequest("File size exceeds 10MB limit.");
+
+            // Fetch existing OrderIds to skip duplicates
+            var existingOrderIds = _context.Sales.Select(s => s.OrderId).Distinct().ToHashSet();
             var salesList = new List<Sales>();
             int skippedRows = 0;
+            int duplicateRows = 0;
+            int processedRows = 0;
 
-            using (var reader = new StreamReader(file.OpenReadStream()))
+            try
             {
-                await reader.ReadLineAsync();
-
-                while (!reader.EndOfStream)
+                using (var reader = new StreamReader(file.OpenReadStream()))
                 {
-                    var line = await reader.ReadLineAsync();
+                    // 4. Header Validation
+                    var headerLine = await reader.ReadLineAsync();
+                    if (string.IsNullOrWhiteSpace(headerLine))
+                        return BadRequest("CSV file is empty or header is missing.");
 
-                    if (string.IsNullOrWhiteSpace(line))
+                    var headers = headerLine.Split(',').Select(h => h.Trim().ToLower()).ToList();
+                        bool hasCustomer = headers.Contains("customer");
+                        bool hasProduct = headers.Contains("product");
+
+                    if (!hasCustomer && !hasProduct)
                     {
-                        skippedRows++;
-                        continue;
+                        return BadRequest("CSV must contain either 'Customer' or 'Product' column.");
                     }
 
-                    var values = line.Split(',');
-
-                    if (values.Length < 7)
+                    // Required columns check (case insensitive)
+                   // var requiredHeaders = new[] { "orderid", "orderdate", "customer", "category", "region", "quantity", "price" };
+                   var requiredHeaders = new[] { "orderid", "orderdate", "category", "region", "quantity", "price" };
+                    if (!requiredHeaders.All(req => headers.Contains(req)))
                     {
-                        skippedRows++;
-                        continue;
+                        return BadRequest("Invalid CSV structure. Required headers: OrderID, OrderDate, (Customer or Product), Category, Region, Quantity, Price");
                     }
 
-                    if (!DateTime.TryParse(values[1], out DateTime orderDate) ||
-                        !int.TryParse(values[5], out int quantity) ||
-                        !decimal.TryParse(values[6], NumberStyles.Any, CultureInfo.InvariantCulture, out decimal price))
+                    // Map header indices for flexibility
+                     int idxId = headers.IndexOf("orderid");
+                     int idxDate = headers.IndexOf("orderdate");
+
+                   // ✅ FIXED LINE (IMPORTANT)
+                   int idxCust = headers.Contains("customer") 
+                   ? headers.IndexOf("customer") 
+                   : headers.IndexOf("product");
+
+                   int idxCat = headers.IndexOf("category");
+                   int idxReg = headers.IndexOf("region");
+                   int idxQty = headers.IndexOf("quantity");
+                   int idxPrice = headers.IndexOf("price");
+
+                    string? line;
+                    while ((line = await reader.ReadLineAsync()) != null)
                     {
-                        skippedRows++;
-                        continue;
+                        processedRows++;
+
+                        if (string.IsNullOrWhiteSpace(line))
+                        {
+                            skippedRows++;
+                            continue;
+                        }
+
+                        // Robust parsing for commas inside quotes (e.g., "John, Smith")
+                        var values = ParseCsvLine(line);
+
+                        if (values.Count < requiredHeaders.Length)
+                        {
+                            skippedRows++;
+                            continue;
+                        }
+
+                        var rawOrderId = values[idxId]?.Trim();
+
+                        // Skip duplicates
+                        if (existingOrderIds.Contains(rawOrderId))
+                        {
+                            duplicateRows++;
+                            continue;
+                        }
+
+                        // Data validation
+                        if (!DateTime.TryParse(values[idxDate], out DateTime orderDate) ||
+                            !int.TryParse(values[idxQty], out int quantity) ||
+                            !decimal.TryParse(values[idxPrice], NumberStyles.Any, CultureInfo.InvariantCulture, out decimal price))
+                        {
+                            skippedRows++;
+                            continue;
+                        }
+
+                        var region = values[idxReg]?.Trim();
+                        var category = values[idxCat]?.Trim();
+
+                        if (string.IsNullOrEmpty(region) || string.IsNullOrEmpty(category))
+                        {
+                            skippedRows++;
+                            continue;
+                        }
+
+                        var sale = new Sales
+                        {
+                            OrderId = rawOrderId,
+                            OrderDate = orderDate,
+                            Customer = values[idxCust]?.Trim(),
+                            Product = values[idxCust]?.Trim(),
+                            Region = region,
+                            Category = category,
+                            Quantity = quantity,
+                            Price = price,
+                            TotalSales = quantity * price
+                        };
+
+                        salesList.Add(sale);
+                        existingOrderIds.Add(rawOrderId);
                     }
-
-                    var region = values[4]?.Trim();
-                    var category = values[3]?.Trim();
-
-                    if (string.IsNullOrEmpty(region) || string.IsNullOrEmpty(category))
-                    {
-                        skippedRows++;
-                        continue;
-                    }
-                    //new
-                    var product = values[2]?.Trim();
-
-                    /* bool exists = _context.Sales.Any(x =>
-                         x.OrderDate == orderDate &&
-                         x.Product == product &&
-                         x.Region == region &&
-                         x.Quantity == quantity &&
-                         x.Price == price);
-
-                     if (exists)
-                     {
-                         skippedRows++;
-                         continue;
-                     }*/
-
-                    var sale = new Sales
-                    {
-                        OrderDate = orderDate,
-                        Product = values[2]?.Trim(),
-                        Region = region,
-                        Category = category,
-                        Quantity = quantity,
-                        Price = price,
-                        TotalSales = quantity * price
-                    };
-
-                    salesList.Add(sale);
                 }
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, $"Internal server error: {ex.Message}");
             }
 
             if (!salesList.Any())
-                return BadRequest("No valid data found in file");
+                return Ok(new { message = "No new valid data found in file", duplicate = duplicateRows, skipped = skippedRows });
 
             await _context.Sales.AddRangeAsync(salesList);
             await _context.SaveChangesAsync();
 
             return Ok(new
             {
-                message = "Data uploaded successfully",
+                message = "Data updated successfully",
                 inserted = salesList.Count,
+                duplicate = duplicateRows,
                 skipped = skippedRows
             });
+        }
+
+        // Helper to handle CSV lines with quotes: "Field, with comma", Field2
+        private List<string> ParseCsvLine(string line)
+        {
+            var result = new List<string>();
+            bool inQuotes = false;
+            var current = new StringBuilder();
+
+            for (int i = 0; i < line.Length; i++)
+            {
+                char c = line[i];
+                if (c == '\"')
+                {
+                    inQuotes = !inQuotes;
+                }
+                else if (c == ',' && !inQuotes)
+                {
+                    result.Add(current.ToString());
+                    current.Clear();
+                }
+                else
+                {
+                    current.Append(c);
+                }
+            }
+            result.Add(current.ToString());
+            return result;
         }
 
         // 🔥 FILTER BASE QUERY (COMMON)

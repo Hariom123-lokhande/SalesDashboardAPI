@@ -215,6 +215,8 @@ function showLoader(flag) {
 }
 
 function checkAuth() {
+
+    
     if (!token) {
         document.getElementById('loginOverlay').style.display = 'flex';
     } else {
@@ -229,7 +231,7 @@ async function handleLogin() {
     const err = document.getElementById('loginError');
 
     try {
-        const res = await fetch('/api/Auth/login', {
+        const res = await fetch('/api/auth/login', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ username: u, password: p })
@@ -269,9 +271,19 @@ async function uploadCsv() {
         return;
     }
 
+    const file = fileInput.files[0];
+    const fileName = file.name.toLowerCase();
+
+    // Client-side extension check
+    if (!fileName.endsWith('.csv')) {
+        alert("Invalid file type. Please upload a .csv file. (Detected: " + file.name + ")");
+        fileInput.value = '';
+        return;
+    }
+
     showLoader(true);
     const formData = new FormData();
-    formData.append('file', fileInput.files[0]);
+    formData.append('file', file);
 
     try {
         const response = await fetchWithAuth('/api/sales/upload', {
@@ -280,13 +292,21 @@ async function uploadCsv() {
         });
 
         if (response.ok) {
-            await loadAll();
-        } else {
-            alert("Upload failed. Verify CSV format.");
+        const data = await response.json();
+        console.log("Upload success:", data);
+        await loadAll();
+        //{
+           // const data = await response.json();
+           // alert("Success: " + (data.message || "File uploaded successfully"));
+           // await loadAll();
+        } 
+       else {
+            const errorMsg = await response.text();
+            alert("Upload failed: " + (errorMsg || "Unknown server error"));
         }
     } catch (err) {
         console.error(err);
-        alert("Error occurred during upload");
+        alert("Error occurred during upload. Check console for details.");
     } finally {
         showLoader(false);
         fileInput.value = '';

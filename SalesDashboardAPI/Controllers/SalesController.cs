@@ -231,58 +231,130 @@ namespace SalesDashboardAPI.Controllers
 
         // 🔥 Forecast (SIMPLE TREND)
         [HttpGet("forecast")]
-public IActionResult GetForecast()
-{
-
-    var data = _context.Sales
-        .AsEnumerable()
-        .GroupBy(s => new { s.OrderDate.Year, s.OrderDate.Month })
-        .Select(g => new
+        public IActionResult GetForecast(string? month, string? region)
         {
-            totalSales = g.Sum(x => x.TotalSales),
-            date = new DateTime(g.Key.Year, g.Key.Month, 1)
-        })
-        .OrderBy(x => x.date)
-        .ToList();
+            var data = ApplyFilters(month, region)
+                .AsEnumerable()
+                .GroupBy(s => new { s.OrderDate.Year, s.OrderDate.Month })
+                .Select(g => new
+                {
+                    totalSales = g.Sum(x => x.TotalSales),
+                    date = new DateTime(g.Key.Year, g.Key.Month, 1)
+                })
+                .OrderBy(x => x.date)
+                .ToList();
 
-    if (data.Count < 2)
-        return Ok(new List<object>());
+            if (data.Count < 2)
+                return Ok(new List<object>());
 
-    // 🔥 Better Growth Calculation
-    decimal totalGrowth = 0;
-    int count = 0;
+            // 🔥 Better Growth Calculation
+            decimal totalGrowth = 0;
+            int count = 0;
 
-    for (int i = 1; i < data.Count; i++)
-    {
-        var prev = data[i - 1].totalSales;
-        var curr = data[i].totalSales;
+            for (int i = 1; i < data.Count; i++)
+            {
+                var prev = data[i - 1].totalSales;
+                var curr = data[i].totalSales;
 
-        if (prev != 0)
-        {
-            totalGrowth += (curr - prev) / prev;
-            count++;
+                if (prev != 0)
+                {
+                    totalGrowth += (curr - prev) / prev;
+                    count++;
+                }
+            }
+
+            var avgGrowth = count > 0 ? totalGrowth / count : 0;
+            var lastSales = data.Last().totalSales;
+
+            var forecast = new List<object>();
+
+            for (int i = 1; i <= 3; i++)
+            {
+                lastSales *= (1 + avgGrowth);
+
+                forecast.Add(new
+                {
+                    month = data.Last().date.AddMonths(i).ToString("MMM"),
+                    totalSales = Math.Round(lastSales, 2)
+                });
+            }
+
+            return Ok(forecast);
         }
-    }
 
-    var avgGrowth = count > 0 ? totalGrowth / count : 0;
-    var lastSales = data.Last().totalSales;
 
-    var forecast = new List<object>();
 
-    for (int i = 1; i <= 3; i++)
-    {
-        lastSales *= (1 + avgGrowth);
-
-        forecast.Add(new
+        // 🔥 Correlation Matrix (Simple Pearson)
+        [HttpGet("correlation")]
+        public IActionResult GetCorrelationData(string? month, string? region)
         {
-            month = data.Last().date.AddMonths(i).ToString("MMM"),
-            totalSales = Math.Round(lastSales, 2)
-        });
-    }
+            var data = ApplyFilters(month, region).ToList();
 
-    return Ok(forecast);
-}
+            if (data.Count < 2)
+                return Ok(new List<object>());
 
+            // Encode Regions numerically
+            var regions = data.Select(s => s.Region).Distinct().ToList();
+            var regionMap = regions.Select((r, i) => new { r, i }).ToDictionary(x => x.r, x => (double)x.i);
 
+            var variables = new List<string> { "TotalSales", "Price", "Quantity", "Region" };
+            var matrix = new List<object>();
+
+            foreach (var var1 in variables)
+            {
+                foreach (var var2 in variables)
+                {
+                    double correlation = CalculateCorrelation(data, var1, var2, regionMap);
+                    matrix.Add(new
+                    {
+                        x = var1,
+                        y = var2,
+                        v = Math.Round(correlation, 2)
+                    });
+                }
+            }
+
+            return Ok(matrix);
+        }
+
+        private double CalculateCorrelation(List<Sales> data, string v1, string v2, Dictionary<string, double> regionMap)
+        {
+            var xValues = GetValues(data, v1, regionMap);
+            var yValues = GetValues(data, v2, regionMap);
+
+            if (xValues.Count != yValues.Count || xValues.Count == 0) return 0;
+
+            double avgX = xValues.Average();
+            double avgY = yValues.Average();
+
+            double sumXY = 0;
+            double sumX2 = 0;
+            double sumY2 = 0;
+
+            for (int i = 0; i < xValues.Count; i++)
+            {
+                double diffX = xValues[i] - avgX;
+                double diffY = yValues[i] - avgY;
+
+                sumXY += diffX * diffY;
+                sumX2 += diffX * diffX;
+                sumY2 += diffY * diffY;
+            }
+
+            double denominator = Math.Sqrt(sumX2 * sumY2);
+            return denominator == 0 ? 0 : sumXY / denominator;
+        }
+
+        private List<double> GetValues(List<Sales> data, string variable, Dictionary<string, double> regionMap)
+        {
+            return variable switch
+            {
+                "TotalSales" => data.Select(s => (double)s.TotalSales).ToList(),
+                "Price" => data.Select(s => (double)s.Price).ToList(),
+                "Quantity" => data.Select(s => (double)s.Quantity).ToList(),
+                "Region" => data.Select(s => regionMap[s.Region]).ToList(),
+                _ => new List<double>()
+            };
+        }
     }
 }

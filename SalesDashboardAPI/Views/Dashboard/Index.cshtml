@@ -1,0 +1,408 @@
+@{
+    ViewData["Title"] = "Sales Dashboard";
+}
+
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Sales Dashboard</title>
+
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet" />
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+    <style>
+        body { background: #f5f7fa; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
+
+        .header {
+            background: linear-gradient(135deg, #667eea, #764ba2);
+            color: white;
+            padding: 30px;
+            border-radius: 12px;
+            text-align: center;
+            margin-bottom: 30px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+        }
+
+        .card { border-radius: 12px; border: none; transition: 0.3s; }
+        .card:hover { transform: translateY(-3px); box-shadow: 0 8px 20px rgba(0,0,0,0.1); }
+
+        .metric-card h3 { font-weight: bold; color: #333; }
+        .metric-card h6 { color: #888; text-transform: uppercase; font-size: 0.75rem; letter-spacing: 1px; }
+
+        .loader-wrapper {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.7);
+            display: none;
+            justify-content: center;
+            align-items: center;
+            z-index: 9999;
+            flex-direction: column;
+            color: white;
+        }
+
+        .btn-upload { background-color: #764ba2; color: white; }
+        .btn-upload:hover { background-color: #667eea; color: white; }
+    </style>
+</head>
+
+<body>
+<div class="container mt-4">
+
+    <div class="header shadow position-relative">
+        <button class="btn btn-sm btn-light position-absolute top-0 end-0 m-3" onclick="logout()">Logout</button>
+        <h2>📊 Sales Dashboard</h2>
+        <p>POC Project - Sales Data Analysis</p>
+    </div>
+
+    <!-- Login Modal -->
+    <div id="loginOverlay" class="loader-wrapper" style="display: flex; background: rgba(255,255,255,0.95); color: #333;">
+        <div class="card p-4 shadow" style="width: 350px; border-top: 5px solid #764ba2;">
+            <h4 class="text-center mb-4">🔐 Login Required</h4>
+            <div class="mb-3">
+                <label class="form-label">Username</label>
+                <input type="text" id="loginUser" class="form-control" placeholder="Enter Username" />
+            </div>
+            <div class="mb-3">
+                <label class="form-label">Password</label>
+                <input type="password" id="loginPass" class="form-control" placeholder="Enter Password" />
+            </div>
+            <button class="btn btn-upload w-100" onclick="handleLogin()">Login</button>
+            <p id="loginError" class="text-danger mt-2 small text-center" style="display:none;">Invalid credentials</p>
+            <p class="mt-3 text-muted text-center small">New user? Register via Swagger first</p>
+        </div>
+    </div>
+
+    <!-- Actions & Filters -->
+    <div class="card p-3 shadow-sm mb-4">
+        <div class="row g-3 align-items-center">
+            <div class="col-md-3">
+                <input type="file" id="csvFile" class="form-control" accept=".csv" />
+            </div>
+            <div class="col-md-2">
+                <button class="btn btn-upload w-100" onclick="uploadCsv()">Upload CSV</button>
+            </div>
+            <div class="col-md-2">
+                <input type="month" id="monthFilter" class="form-control" />
+            </div>
+            <div class="col-md-2">
+                <input type="text" id="regionFilter" class="form-control" placeholder="Region" />
+            </div>
+            <div class="col-md-3">
+                <button class="btn btn-primary w-100" onclick="loadAll()">Apply Filters</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 🔥 NEW: Empty State (nothing removed, only added) -->
+    <div id="emptyState" class="text-center mt-5">
+        <h4>No Data Available</h4>
+        <p>Please upload CSV to view dashboard</p>
+    </div>
+
+    <div class="loader-wrapper" id="loader">
+        <div class="spinner-border text-light" role="status" style="width: 3rem; height: 3rem;">
+            <span class="visually-hidden">Loading...</span>
+        </div>
+        <h5 class="mt-3">Processing Sales Data...</h5>
+    </div>
+
+    <!-- Dashboard Content (Wait for data) -->
+    <div id="dashboardContent" style="display:none;">
+
+    <!-- Metrics -->
+    <div class="row mb-4">
+        <div class="col-md-3">
+            <div class="card text-center p-3 shadow-sm metric-card">
+                <h6>Total Revenue</h6>
+                <h3 id="totalRevenue">0</h3>
+            </div>
+        </div>
+
+        <div class="col-md-3">
+            <div class="card text-center p-3 shadow-sm metric-card">
+                <h6>Total Orders</h6>
+                <h3 id="totalOrders">0</h3>
+            </div>
+        </div>
+
+        <div class="col-md-3">
+            <div class="card text-center p-3 shadow-sm metric-card">
+                <h6>Top Region</h6>
+                <h3 id="topRegion">-</h3>
+            </div>
+        </div>
+
+        <div class="col-md-3">
+            <div class="card text-center p-3 shadow-sm metric-card">
+                <h6>Top Product</h6>
+                <h3 id="topProduct">-</h3>
+            </div>
+        </div>
+    </div>
+
+    <!-- Charts -->
+    <div class="row">
+        <div class="col-md-6 mb-4">
+            <div class="card p-3 shadow-sm">
+                <h5>📈 Monthly Sales Trend</h5>
+                <div style="height: 250px; position: relative;">
+                    <canvas id="lineChart"></canvas>
+                </div>
+            </div>
+        </div>
+
+        <div class="col-md-6 mb-4">
+            <div class="card p-3 shadow-sm">
+                <h5>📊 Sales by Region</h5>
+                <div style="height: 250px; position: relative;">
+                    <canvas id="barChart"></canvas>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="row">
+        <div class="col-md-6 mb-4">
+            <div class="card p-3 shadow-sm text-center">
+                <h5>🥧 Category Distribution</h5>
+                <div style="height: 250px; max-width: 320px; margin: 0 auto; position: relative;">
+                    <canvas id="pieChart"></canvas>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-6 mb-4">
+            <div class="card p-3 shadow-sm">
+                <h5>🔮 3-Month Forecast</h5>
+                <div style="height: 250px; position: relative;">
+                    <canvas id="forecastChart"></canvas>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Export -->
+    <div class="text-center mb-5">
+        <button class="btn btn-success" onclick="exportData()">📤 Export Dashboard JSON</button>
+    </div>
+    </div> <!-- End Dashboard Content -->
+
+</div> <!-- End Main Container -->
+
+<script>
+let charts = {};
+let token = sessionStorage.getItem('jwtToken');
+
+function showLoader(flag) {
+    document.getElementById('loader').style.display = flag ? 'flex' : 'none';
+}
+
+function checkAuth() {
+    if (!token) {
+        document.getElementById('loginOverlay').style.display = 'flex';
+    } else {
+        document.getElementById('loginOverlay').style.display = 'none';
+        // loadAll() removed - wait for user to upload file
+    }
+}
+
+async function handleLogin() {
+    const u = document.getElementById('loginUser').value;
+    const p = document.getElementById('loginPass').value;
+    const err = document.getElementById('loginError');
+
+    try {
+        const res = await fetch('/api/Auth/login', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ username: u, password: p })
+        });
+
+        if (res.ok) {
+            const data = await res.json();
+            token = data.token;
+            sessionStorage.setItem('jwtToken', token);
+            location.reload();
+        } else {
+            err.style.display = 'block';
+        }
+    } catch (e) { err.style.display = 'block'; }
+}
+
+function logout() {
+    sessionStorage.removeItem('jwtToken');
+    location.reload();
+}
+
+// Helper for API calls with Token
+async function fetchWithAuth(url, options = {}) {
+    options.headers = options.headers || {};
+    if (token) options.headers['Authorization'] = 'Bearer ' + token;
+
+    const response = await fetch(url, options);
+    if (response.status === 401) logout();
+    return response;
+}
+
+// 🔥 UPLOAD
+async function uploadCsv() {
+    const fileInput = document.getElementById('csvFile');
+    if (fileInput.files.length === 0) {
+        alert("Please select a file first");
+        return;
+    }
+
+    showLoader(true);
+    const formData = new FormData();
+    formData.append('file', fileInput.files[0]);
+
+    try {
+        const response = await fetchWithAuth('/api/sales/upload', {
+            method: 'POST',
+            body: formData
+        });
+
+        if (response.ok) {
+            await loadAll();
+        } else {
+            alert("Upload failed. Verify CSV format.");
+        }
+    } catch (err) {
+        console.error(err);
+        alert("Error occurred during upload");
+    } finally {
+        showLoader(false);
+        fileInput.value = '';
+    }
+}
+
+// 🔥 FILTERS
+function getFilters() {
+    const month = document.getElementById('monthFilter').value;
+    const region = document.getElementById('regionFilter').value;
+
+    let query = [];
+    if (month) query.push(`month=${month}`);
+    if (region) query.push(`region=${region}`);
+
+    return query.length ? '?' + query.join('&') : '';
+}
+
+// 🔥 MAIN LOAD
+async function loadAll() {
+    showLoader(true);
+    document.getElementById('emptyState').style.display = 'none';
+    document.getElementById('dashboardContent').style.display = 'block';
+
+    const query = getFilters();
+
+    try {
+        const resMetrics = await fetchWithAuth('/api/sales/dashboard-metrics' + query);
+        if (!resMetrics.ok) return;
+        const metrics = await resMetrics.json();
+
+        document.getElementById('totalRevenue').innerText = metrics.totalRevenue;
+        document.getElementById('totalOrders').innerText = metrics.totalOrders;
+        document.getElementById('topRegion').innerText = metrics.topRegion || '-';
+        document.getElementById('topProduct').innerText = metrics.topProduct || '-';
+
+        const trendData = await (await fetchWithAuth('/api/sales/monthly-sales' + query)).json();
+        if (charts.line) charts.line.destroy();
+
+        charts.line = new Chart(lineChart, {
+            type: 'line',
+            data: {
+                labels: trendData.map(x => x.month + '/' + x.year),
+                datasets: [{
+                    label: 'Sales Revenue',
+                    data: trendData.map(x => x.totalSales),
+                    borderColor: '#667eea',
+                    backgroundColor: 'rgba(102, 126, 234, 0.1)',
+                    fill: true,
+                    tension: 0.3
+                }]
+            },
+            options: { responsive: true, maintainAspectRatio: false }
+        });
+
+        const regionData = await (await fetchWithAuth('/api/sales/sales-by-region' + query)).json();
+        if (charts.bar) charts.bar.destroy();
+
+        charts.bar = new Chart(barChart, {
+            type: 'bar',
+            data: {
+                labels: regionData.map(x => x.region),
+                datasets: [{
+                    label: 'Sales Revenue',
+                    data: regionData.map(x => x.totalSales),
+                    backgroundColor: '#764ba2'
+                }]
+            },
+            options: { responsive: true, maintainAspectRatio: false }
+        });
+
+        const categoryData = await (await fetchWithAuth('/api/sales/sales-by-category' + query)).json();
+        if (charts.pie) charts.pie.destroy();
+
+        charts.pie = new Chart(pieChart, {
+            type: 'pie',
+            data: {
+                labels: categoryData.map(x => x.category),
+                datasets: [{
+                    label: 'Sales',
+                    data: categoryData.map(x => x.totalSales),
+                    backgroundColor: ['#667eea', '#764ba2', '#6366f1', '#a855f7', '#ec4899']
+                }]
+            },
+            options: { 
+                responsive: true, 
+                maintainAspectRatio: true,
+                plugins: {
+                    legend: { position: 'bottom' }
+                }
+            }
+        });
+
+        const forecastData = await (await fetchWithAuth('/api/sales/forecast')).json();
+        if (charts.forecast) charts.forecast.destroy();
+
+        charts.forecast = new Chart(forecastChart, {
+            type: 'line',
+            data: {
+                labels: forecastData.map(x => x.month),
+                datasets: [{
+                    label: 'Predicted Sales',
+                    data: forecastData.map(x => x.totalSales),
+                    borderColor: '#ec4899',
+                    borderDash: [5, 5],
+                    backgroundColor: 'rgba(236, 72, 153, 0.1)',
+                    fill: true,
+                    tension: 0.3
+                }]
+            },
+            options: { responsive: true, maintainAspectRatio: false }
+        });
+    } catch (e) { console.error("Load error", e); }
+    finally { showLoader(false); }
+}
+
+// 🔥 EXPORT
+async function exportData() {
+    const res = await fetchWithAuth('/api/sales/dashboard-metrics');
+    const data = await res.json();
+    let blob = new Blob([JSON.stringify(data)], { type: "application/json" });
+    let a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = "dashboard.json";
+    a.click();
+}
+
+checkAuth();
+
+</script>
+
+</body>
+</html>

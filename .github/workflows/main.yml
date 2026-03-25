@@ -6,8 +6,8 @@ on:
       - master
 
 jobs:
-  build:
-    runs-on: windows-latest
+  build-and-deploy:
+    runs-on: self-hosted   # 👈 IMPORTANT (tumhara runner)
 
     steps:
     - name: Checkout code
@@ -27,8 +27,24 @@ jobs:
     - name: Publish project
       run: dotnet publish -c Release -o publish
 
-    - name: Upload artifact
-      uses: actions/upload-artifact@v3
-      with:
-        name: publish-folder
-        path: publish
+    # 🔥 Stop IIS Site
+    - name: Stop IIS Site
+      run: |
+        Import-Module WebAdministration
+        Stop-WebSite -Name "SalesDashboard"
+
+    # 🔥 Clear old files
+    - name: Clean IIS Folder
+      run: |
+        Remove-Item -Recurse -Force "C:\inetpub\wwwroot\SalesDashboard\*"
+
+    # 🔥 Copy new files
+    - name: Copy Files to IIS
+      run: |
+        Copy-Item -Path "publish\*" -Destination "C:\inetpub\wwwroot\SalesDashboard" -Recurse -Force
+
+    # 🔥 Start IIS Site
+    - name: Start IIS Site
+      run: |
+        Import-Module WebAdministration
+        Start-WebSite -Name "SalesDashboard"

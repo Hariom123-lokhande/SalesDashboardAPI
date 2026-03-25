@@ -29,13 +29,10 @@ jobs:
       run: dotnet publish -c Release -o publish
 
     # 🔹 Stop IIS (safe)
-    - name: Stop IIS Site
+    - name: Start IIS
       shell: powershell
-      run: |
-        Import-Module WebAdministration
-        if (Get-Website -Name "SalesDashboard" -ErrorAction SilentlyContinue) {
-            Stop-WebSite -Name "SalesDashboard"
-        }
+     run: |
+       iisreset /start
 
     # 🔹 Ensure folder exists
     - name: Ensure IIS Folder Exists

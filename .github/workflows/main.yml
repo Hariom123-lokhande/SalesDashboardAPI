@@ -7,44 +7,63 @@ on:
 
 jobs:
   build-and-deploy:
-    runs-on: self-hosted   # 👈 IMPORTANT (tumhara runner)
+    runs-on: self-hosted
 
     steps:
+    # 🔹 Checkout
     - name: Checkout code
-      uses: actions/checkout@v3
+      uses: actions/checkout@v4
 
-    - name: Setup .NET
-      uses: actions/setup-dotnet@v3
-      with:
-        dotnet-version: '8.0.x'
+    # ❌ Removed setup-dotnet (permission issue fix)
 
+    # 🔹 Restore
     - name: Restore dependencies
       run: dotnet restore
 
+    # 🔹 Build
     - name: Build project
       run: dotnet build --configuration Release --no-restore
 
+    # 🔹 Publish
     - name: Publish project
       run: dotnet publish -c Release -o publish
 
-    # 🔥 Stop IIS Site
+    # 🔹 Stop IIS (safe)
     - name: Stop IIS Site
+      shell: powershell
       run: |
         Import-Module WebAdministration
-        Stop-WebSite -Name "SalesDashboard"
+        if (Get-Website -Name "SalesDashboard" -ErrorAction SilentlyContinue) {
+            Stop-WebSite -Name "SalesDashboard"
+        }
 
-    # 🔥 Clear old files
-    - name: Clean IIS Folder
+    # 🔹 Ensure folder exists
+    - name: Ensure IIS Folder Exists
+      shell: powershell
       run: |
-        Remove-Item -Recurse -Force "C:\inetpub\wwwroot\SalesDashboard\*"
+        if (!(Test-Path "C:\inetpub\wwwroot\SalesDashboard")) {
+            New-Item -ItemType Directory -Path "C:\inetpub\wwwroot\SalesDashboard"
+        }
 
-    # 🔥 Copy new files
+    # 🔹 Clean folder safely
+    - name: Clean IIS Folder
+      shell: powershell
+      run: |
+        if (Test-Path "C:\inetpub\wwwroot\SalesDashboard") {
+            Get-ChildItem "C:\inetpub\wwwroot\SalesDashboard" -Recurse | Remove-Item -Force -Recurse -ErrorAction SilentlyContinue
+        }
+
+    # 🔹 Copy files
     - name: Copy Files to IIS
+      shell: powershell
       run: |
         Copy-Item -Path "publish\*" -Destination "C:\inetpub\wwwroot\SalesDashboard" -Recurse -Force
 
-    # 🔥 Start IIS Site
+    # 🔹 Start IIS (safe)
     - name: Start IIS Site
+      shell: powershell
       run: |
         Import-Module WebAdministration
-        Start-WebSite -Name "SalesDashboard"
+        if (Get-Website -Name "SalesDashboard" -ErrorAction SilentlyContinue) {
+            Start-WebSite -Name "SalesDashboard"
+        }

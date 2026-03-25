@@ -31,7 +31,7 @@ jobs:
     # 🔹 Stop IIS (safe)
     - name: Start IIS
       shell: powershell
-     run: |
+      run: |
        iisreset /start
 
     # 🔹 Ensure folder exists
